@@ -1,0 +1,151 @@
+package ru.castle.game
+
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.LinearGradient
+import android.graphics.Paint
+import android.graphics.Rect
+import android.graphics.RectF
+import android.graphics.Shader
+
+object P {
+    val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE; textSize = 30f; typeface = android.graphics.Typeface.DEFAULT_BOLD
+    }
+    val small = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE; textSize = 22f
+    }
+    val title = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE; textSize = 64f; typeface = android.graphics.Typeface.DEFAULT_BOLD
+        textAlign = Paint.Align.CENTER
+    }
+    val pixel = Paint().apply { isFilterBitmap = false; isDither = true }
+    val dim = Paint().apply { color = 0xCC000000.toInt() }
+    val fillBmp = Paint().apply { isFilterBitmap = false }
+}
+
+class Btn(
+    val x: Float, val y: Float, val w: Float, val h: Float,
+    var label: String, val color: Int = 0xFF3E4A6B.toInt(),
+    var enabled: Boolean = true
+) {
+    fun hit(tx: Float, ty: Float) = enabled && tx >= x && tx <= x + w && ty >= y && ty <= y + h
+
+    fun draw(c: Canvas) {
+        val p = Paint(Paint.ANTI_ALIAS_FLAG)
+        p.color = if (enabled) color else 0xFF333844.toInt()
+        c.drawRoundRect(RectF(x, y, x + w, y + h), 14f, 14f, p)
+        p.color = if (enabled) 0xFF8FA0C8.toInt() else 0xFF4A5060.toInt()
+        p.style = Paint.Style.STROKE; p.strokeWidth = 3f
+        c.drawRoundRect(RectF(x, y, x + w, y + h), 14f, 14f, p)
+        val t = Paint(P.text)
+        t.textAlign = Paint.Align.CENTER
+        t.textSize = if (h < 56) 24f else 30f
+        if (!enabled) t.color = 0xFF777777.toInt()
+        val baseline = y + h / 2f - (t.descent() + t.ascent()) / 2f
+        c.drawText(label, x + w / 2f, baseline, t)
+    }
+}
+
+object Ui {
+    fun panel(c: Canvas, x: Float, y: Float, w: Float, h: Float, alpha: Int = 235) {
+        val p = Paint(Paint.ANTI_ALIAS_FLAG)
+        p.color = Color.argb(alpha, 24, 26, 40)
+        c.drawRoundRect(RectF(x, y, x + w, y + h), 18f, 18f, p)
+        p.color = 0xFF8FA0C8.toInt(); p.style = Paint.Style.STROKE; p.strokeWidth = 3f
+        c.drawRoundRect(RectF(x, y, x + w, y + h), 18f, 18f, p)
+    }
+
+    fun bar(c: Canvas, x: Float, y: Float, w: Float, h: Float, frac: Float, color: Int, label: String) {
+        val p = Paint(Paint.ANTI_ALIAS_FLAG)
+        p.color = 0xFF10131F.toInt()
+        c.drawRoundRect(RectF(x, y, x + w, y + h), 8f, 8f, p)
+        p.color = color
+        val fw = (w * frac.coerceIn(0f, 1f))
+        if (fw > 4f) c.drawRoundRect(RectF(x, y, x + fw, y + h), 8f, 8f, p)
+        p.color = 0xFF8FA0C8.toInt(); p.style = Paint.Style.STROKE; p.strokeWidth = 2f
+        c.drawRoundRect(RectF(x, y, x + w, y + h), 8f, 8f, p)
+        val t = Paint(P.small); t.textSize = h - 6f; t.textAlign = Paint.Align.CENTER
+        c.drawText(label, x + w / 2f, y + h - 5f, t)
+    }
+
+    fun sprite(c: Canvas, name: String, x: Float, y: Float, scale: Float) {
+        val b = Assets.get(name)
+        val d = RectF(x, y, x + b.width * scale, y + b.height * scale)
+        c.drawBitmap(b, null, d, P.pixel)
+    }
+
+    fun spriteFlash(c: Canvas, name: String, x: Float, y: Float, scale: Float, flash: Float) {
+        sprite(c, name, x, y, scale)
+        if (flash > 0f) {
+            val p = Paint()
+            p.color = Color.argb((flash * 3f * 255).toInt().coerceAtMost(200), 255, 255, 255)
+            p.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC_ATOP)
+            val b = Assets.get(name)
+            c.drawRect(x, y, x + b.width * scale, y + b.height * scale, p)
+        }
+    }
+
+    fun text(c: Canvas, s: String, x: Float, y: Float, size: Float = 30f, color: Int = Color.WHITE, center: Boolean = false) {
+        val t = Paint(P.text)
+        t.textSize = size; t.color = color
+        if (center) t.textAlign = Paint.Align.CENTER
+        c.drawText(s, x, y, t)
+    }
+
+    fun itemIcon(c: Canvas, item: ItemInstance, x: Float, y: Float, size: Float) {
+        val b = Assets.get(item.def.icon)
+        val d = RectF(x + 6, y + 6, x + size - 6, y + size - 6)
+        c.drawBitmap(b, null, d, P.pixel)
+        val p = Paint(); p.color = item.rarity.color; p.style = Paint.Style.STROKE; p.strokeWidth = 4f
+        c.drawRect(x + 2, y + 2, x + size - 2, y + size - 2, p)
+    }
+
+    fun bg(c: Canvas, w: Float, h: Float) {
+        val g = LinearGradient(0f, 0f, 0f, h, 0xFF171A2B.toInt(), 0xFF0B0C14.toInt(), Shader.TileMode.CLAMP)
+        val p = Paint(); p.shader = g
+        c.drawRect(0f, 0f, w, h, p)
+    }
+}
+
+class FloatText(var x: Float, var y: Float, val text: String, val color: Int, var life: Float = 1.2f) {
+    fun update(dt: Float) { life -= dt; y -= 55f * dt }
+    fun draw(c: Canvas) {
+        if (life <= 0f) return
+        val t = Paint(P.text); t.textSize = 34f; t.color = color; t.textAlign = Paint.Align.CENTER
+        t.alpha = (life.coerceIn(0f, 1f) * 255).toInt()
+        c.drawText(text, x, y, t)
+    }
+}
+
+class Particle(var x: Float, var y: Float, val vx: Float, val vy: Float, val color: Int, var life: Float) {
+    fun update(dt: Float) { life -= dt; x += vx * dt; y += vy * dt; vy += 500f * dt }
+    fun draw(c: Canvas) {
+        if (life <= 0f) return
+        val p = Paint(); p.color = color
+        p.alpha = (life.coerceIn(0f, 1f) * 255).toInt()
+        c.drawRect(x - 4, y - 4, x + 4, y + 4, p)
+    }
+}
+
+class Fx {
+    val floats = ArrayList<FloatText>()
+    val parts = ArrayList<Particle>()
+    fun dmg(x: Float, y: Float, amount: Int, crit: Boolean) {
+        floats.add(FloatText(x, y, (if (crit) "КРИТ " else "") + "-$amount", if (crit) 0xFFFFD54F.toInt() else 0xFFEF5350.toInt()))
+    }
+    fun heal(x: Float, y: Float, amount: Int) = floats.add(FloatText(x, y, "+$amount", 0xFF66BB6A.toInt()))
+    fun info(x: Float, y: Float, s: String) = floats.add(FloatText(x, y, s, 0xFF90CAF9.toInt()))
+    fun burst(x: Float, y: Float, color: Int, n: Int = 12) {
+        for (i in 0 until n) {
+            val a = kotlin.random.Random.nextDouble(0.0, Math.PI * 2)
+            val sp = (120 + kotlin.random.Random.nextInt(220)).toFloat()
+            parts.add(Particle(x, y, (Math.cos(a) * sp).toFloat(), (Math.sin(a) * sp).toFloat() - 120f, color, 0.5f + kotlin.random.Random.nextFloat() * 0.4f))
+        }
+    }
+    fun update(dt: Float) {
+        floats.forEach { it.update(dt) }; floats.removeAll { it.life <= 0f }
+        parts.forEach { it.update(dt) }; parts.removeAll { it.life <= 0f }
+    }
+    fun draw(c: Canvas) { parts.forEach { it.draw(c) }; floats.forEach { it.draw(c) } }
+}

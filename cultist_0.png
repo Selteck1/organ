@@ -1,0 +1,98 @@
+package ru.castle.game
+
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import kotlin.math.sin
+import kotlin.random.Random
+
+class TitleScene : Scene {
+    private var time = 0f
+    private val sparks = ArrayList<Particle>()
+    private val newBtn = Btn(490f, 420f, 300f, 72f, "Новая игра", 0xFF7A3030.toInt())
+    private val contBtn = Btn(490f, 510f, 300f, 72f, "Продолжить")
+    private var hasSave = false
+
+    override fun update(dt: Float, gv: GameView) {
+        time += dt
+        hasSave = Save.has(gv.context)
+        if (Random.nextInt(100) < 8) {
+            val tx = if (Random.nextBoolean()) 140f else 1140f
+            sparks.add(Particle(tx, 240f, (Random.nextFloat() - 0.5f) * 30f, -60f - Random.nextFloat() * 60f,
+                if (Random.nextBoolean()) 0xFFFF9800.toInt() else 0xFFFFD54F.toInt(), 0.6f + Random.nextFloat() * 0.5f))
+        }
+        sparks.forEach { it.update(dt) }
+        sparks.removeAll { it.life <= 0f }
+    }
+
+    override fun render(c: Canvas, gv: GameView) {
+        Ui.bg(c, 1280f, 720f)
+        // castle silhouette
+        val p = Paint(); p.color = 0xFF232741.toInt()
+        c.drawRect(0f, 480f, 1280f, 720f, p)
+        c.drawRect(140f, 280f, 300f, 500f, p)
+        c.drawRect(980f, 280f, 1140f, 500f, p)
+        c.drawRect(480f, 200f, 800f, 520f, p)
+        for (bx in 140..285 step 40) c.drawRect(bx.toFloat(), 250f, bx + 20f, 282f, p)
+        for (bx in 980..1125 step 40) c.drawRect(bx.toFloat(), 250f, bx + 20f, 282f, p)
+        for (bx in 480..780 step 45) c.drawRect(bx.toFloat(), 165f, bx + 22f, 202f, p)
+        // windows
+        val wp = Paint(); wp.color = 0xFFF0C85A.toInt()
+        for (wy in listOf(320f, 380f)) {
+            c.drawRect(190f, wy, 220f, wy + 34f, wp)
+            c.drawRect(1030f, wy, 1060f, wy + 34f, wp)
+        }
+        c.drawRect(620f, 300f, 660f, 360f, wp)
+        // torches
+        Ui.sprite(c, if (time % 0.4f < 0.2f) "torch_0" else "torch_1", 100f, 200f, 4f)
+        Ui.sprite(c, if (time % 0.4f < 0.2f) "torch_1" else "torch_0", 1100f, 200f, 4f)
+        sparks.forEach { it.draw(c) }
+        // moon
+        val mp = Paint(); mp.color = 0xFFE8E4D0.toInt()
+        c.drawCircle(1100f, 100f, 46f, mp)
+        // logo
+        val t1 = Paint(P.title); t1.textSize = 92f
+        t1.color = 0xFF151726.toInt()
+        c.drawText("ЗАМОК ТЕНЕЙ", 643f, 147f, t1)
+        t1.color = 0xFFF0C85A.toInt()
+        c.drawText("ЗАМОК ТЕНЕЙ", 640f, 143f, t1)
+        Ui.text(c, "Рогалик RPG  •  12 этажей  •  боссы  •  лут", 640f, 200f, 26f, 0xFFAAB2C8.toInt(), center = true)
+        newBtn.draw(c)
+        contBtn.enabled = hasSave
+        contBtn.draw(c)
+        Ui.text(c, "Работает полностью оффлайн  •  v1.0", 640f, 690f, 20f, 0xFF6A7194.toInt(), center = true)
+    }
+
+    override fun touch(x: Float, y: Float, gv: GameView) {
+        if (newBtn.hit(x, y)) {
+            Save.clear(gv.context)
+            gv.resetPlayer()
+            gv.floor = 1
+            gv.resetTo(MapScene(gv, 1))
+        } else if (contBtn.hit(x, y) && hasSave) {
+            val map = Save.load(gv.context, gv)
+            gv.resetTo(map)
+        }
+    }
+}
+
+class VictoryScene : Scene {
+    private var time = 0f
+    private val btn = Btn(490f, 520f, 300f, 72f, "В главное меню")
+    override fun update(dt: Float, gv: GameView) { time += dt }
+    override fun render(c: Canvas, gv: GameView) {
+        Ui.bg(c, 1280f, 720f)
+        Ui.sprite(c, "dragon_1", 480f, 120f + sin(time * 2).toFloat() * 10f, 5f)
+        Ui.text(c, "ПОБЕДА!", 640f, 300f, 80f, 0xFFF0C85A.toInt(), center = true)
+        Ui.text(c, "Дракон Теней повержен. Замок свободен!", 640f, 370f, 30f, Color.WHITE, center = true)
+        Ui.text(c, "Уровень: ${gv.player.level}   Золото: ${gv.player.gold}", 640f, 425f, 28f, 0xFFAAB2C8.toInt(), center = true)
+        Ui.text(c, "Спасибо за игру!", 640f, 475f, 26f, 0xFF66BB6A.toInt(), center = true)
+        btn.draw(c)
+    }
+    override fun touch(x: Float, y: Float, gv: GameView) {
+        if (btn.hit(x, y)) {
+            Save.clear(gv.context)
+            gv.resetTo(TitleScene())
+        }
+    }
+}

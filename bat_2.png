@@ -1,0 +1,253 @@
+package ru.castle.game
+
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+
+// ---------- simple message popup ----------
+class MessageScene(val lines: List<String>, val title: String = "") : Scene {
+    private val ok = Btn(520f, 560f, 240f, 70f, "ОК")
+    override fun update(dt: Float, gv: GameView) {}
+    override fun render(c: Canvas, gv: GameView) {
+        c.drawRect(0f, 0f, 1280f, 720f, P.dim)
+        Ui.panel(c, 290f, 140f, 700f, 520f)
+        if (title.isNotEmpty()) Ui.text(c, title, 640f, 210f, 44f, 0xFFFFD54F.toInt(), center = true)
+        var y = if (title.isEmpty()) 250f else 280f
+        for (ln in lines) {
+            Ui.text(c, ln, 640f, y, 30f, Color.WHITE, center = true)
+            y += 48f
+        }
+        ok.draw(c)
+    }
+    override fun touch(x: Float, y: Float, gv: GameView) {
+        if (ok.hit(x, y)) gv.pop()
+    }
+}
+
+// ---------- item popup ----------
+class ItemPopupScene(
+    private val gv: GameView,
+    private val item: ItemInstance,
+    private val sellMode: Boolean = false
+) : Scene {
+    private val equipBtn = Btn(360f, 560f, 260f, 64f, "Экипировать")
+    private val sellBtn = Btn(660f, 560f, 260f, 64f, "Продать (${gv.player.sellPrice(item)} з.)")
+    private val closeBtn = Btn(940f, 560f, 160f, 64f, "Закрыть", 0xFF5B3A3A.toInt())
+
+    override fun update(dt: Float, gv: GameView) {}
+    override fun render(c: Canvas, gv: GameView) {
+        c.drawRect(0f, 0f, 1280f, 720f, P.dim)
+        Ui.panel(c, 250f, 110f, 780f, 560f)
+        Ui.itemIcon(c, item, 610f, 140f, 110f)
+        Ui.text(c, item.displayName(), 640f, 300f, 38f, item.rarity.color, center = true)
+        Ui.text(c, item.def.slot.rus + "  •  ур. предмета ${item.level}", 640f, 340f, 24f, 0xFFAAB2C8.toInt(), center = true)
+        var y = 395f
+        for (ln in item.statLines()) {
+            Ui.text(c, ln, 640f, y, 28f, Color.WHITE, center = true); y += 40f
+        }
+        equipBtn.draw(c)
+        if (sellMode) sellBtn.draw(c)
+        closeBtn.draw(c)
+    }
+    override fun touch(x: Float, y: Float, gv: GameView) {
+        val p = gv.player
+        if (equipBtn.hit(x, y)) {
+            p.equipItem(item)
+            Save.save(gv.context, gv, gv.mapScene())
+            gv.pop()
+        } else if (sellMode && sellBtn.hit(x, y)) {
+            p.inventory.remove(item)
+            p.gold += p.sellPrice(item)
+            Save.save(gv.context, gv, gv.mapScene())
+            gv.pop()
+        } else if (closeBtn.hit(x, y)) gv.pop()
+    }
+}
+
+// ---------- inventory ----------
+class InventoryScene(private val gv: GameView) : Scene {
+    private val backBtn = Btn(40f, 640f, 220f, 60f, "Назад", 0xFF5B3A3A.toInt())
+    private val slots = listOf(
+        Slot.WEAPON, Slot.ARMOR, Slot.HELM, Slot.BOOTS, Slot.SHIELD, Slot.RING, Slot.AMULET
+    )
+    private var selected: ItemInstance? = null
+
+    override fun update(dt: Float, gv: GameView) {}
+    override fun render(c: Canvas, gv: GameView) {
+        Ui.bg(c, 1280f, 720f)
+        Ui.text(c, "ИНВЕНТАРЬ", 640f, 60f, 44f, 0xFFFFD54F.toInt(), center = true)
+        // equipped row
+        Ui.text(c, "Снаряжение:", 90f, 115f, 26f, 0xFFAAB2C8.toInt())
+        var sx = 90f
+        for (s in slots) {
+            val it = gv.player.equip[s]
+            if (it != null) Ui.itemIcon(c, it, sx, 135f, 88f)
+            else {
+                val p = Paint(); p.color = 0xFF2A2E42.toInt(); p.style = Paint.Style.STROKE; p.strokeWidth = 3f
+                c.drawRect(sx + 2, 137f, sx + 86, 221f, p)
+                Ui.text(c, s.rus.take(4), sx + 44, 188f, 18f, 0xFF5A6078.toInt(), center = true)
+            }
+            sx += 104f
+        }
+        // grid
+        val inv = gv.player.inventory
+        val cell = 100f
+        for (i in inv.indices) {
+            val col = i % 9; val row = i / 9
+            val x = 90f + col * (cell + 12); val y = 260f + row * (cell + 12)
+            Ui.itemIcon(c, inv[i], x, y, cell)
+        }
+        if (inv.isEmpty()) Ui.text(c, "Пусто. Обыщите сундуки и поверженных врагов!", 640f, 400f, 28f, 0xFFAAB2C8.toInt(), center = true)
+        Ui.text(c, "Нажмите на предмет, чтобы экипировать", 640f, 620f, 24f, 0xFF8FA0C8.toInt(), center = true)
+        backBtn.draw(c)
+    }
+    override fun touch(x: Float, y: Float, gv: GameView) {
+        if (backBtn.hit(x, y)) { gv.pop(); return }
+        val inv = gv.player.inventory
+        val cell = 100f
+        for (i in inv.indices) {
+            val col = i % 9; val row = i / 9
+            val cx = 90f + col * (cell + 12); val cy = 260f + row * (cell + 12)
+            if (x >= cx && x <= cx + cell && y >= cy && y <= cy + cell) {
+                gv.push(ItemPopupScene(gv, inv[i]))
+                return
+            }
+        }
+        // tap equipped -> unequip
+        var sx = 90f
+        for (s in slots) {
+            val it = gv.player.equip[s]
+            if (it != null && x >= sx && x <= sx + 88 && y >= 135f && y <= 223f) {
+                gv.player.unequip(s)
+                Save.save(gv.context, gv, gv.mapScene())
+                return
+            }
+            sx += 104f
+        }
+    }
+}
+
+// ---------- character sheet ----------
+class CharacterScene(private val gv: GameView) : Scene {
+    private val backBtn = Btn(40f, 640f, 220f, 60f, "Назад", 0xFF5B3A3A.toInt())
+    private val plusBtns = ArrayList<Btn>()
+
+    override fun update(dt: Float, gv: GameView) {}
+    override fun render(c: Canvas, gv: GameView) {
+        Ui.bg(c, 1280f, 720f)
+        val p = gv.player
+        Ui.text(c, "ПЕРСОНАЖ", 640f, 60f, 44f, 0xFFFFD54F.toInt(), center = true)
+        Ui.sprite(c, "hero_idle_0", 150f, 120f, 4f)
+        Ui.text(c, "Рыцарь-призрак", 250f, 140f, 36f, Color.WHITE)
+        Ui.text(c, "Уровень ${p.level}", 250f, 185f, 28f, 0xFFAAB2C8.toInt())
+        Ui.bar(c, 250f, 210f, 320f, 26f, p.xp.toFloat() / Balance.xpForLevel(p.level), 0xFFFFD54F.toInt(), "Опыт: ${p.xp}/${Balance.xpForLevel(p.level)}")
+        Ui.text(c, "Золото: ${p.gold}", 250f, 275f, 28f, 0xFFFFD54F.toInt())
+        Ui.text(c, "Зелья: ${p.potions}", 250f, 315f, 28f, 0xFFEF9A9A.toInt())
+
+        var y = 380f
+        Ui.text(c, "Здоровье: ${p.hp}/${p.maxHp()}", 250f, y, 28f); y += 44
+        Ui.text(c, "Мана: ${p.mp}/${p.maxMp()}", 250f, y, 28f); y += 44
+        Ui.text(c, "Атака: ${p.attackPower()}", 250f, y, 28f); y += 44
+        Ui.text(c, "Защита: ${p.defense()}", 250f, y, 28f); y += 44
+        Ui.text(c, "Крит: %.0f%%".format(p.critChance()), 250f, y, 28f)
+
+        Ui.text(c, "ХАРАКТЕРИСТИКИ", 700f, 140f, 34f, 0xFFFFD54F.toInt())
+        plusBtns.clear()
+        val stats = listOf("Сила" to "str", "Ловкость" to "agi", "Интеллект" to "int", "Выносливость" to "vit")
+        var sy = 200f
+        for ((label, key) in stats) {
+            Ui.text(c, "$label: ${p.statTotal(key)}", 700f, sy, 30f, Color.WHITE)
+            if (p.freePoints > 0) {
+                val b = Btn(930f, sy - 34f, 60f, 44f, "+")
+                b.draw(c); plusBtns.add(b)
+            }
+            sy += 64f
+        }
+        if (p.freePoints > 0) Ui.text(c, "Свободных очков: ${p.freePoints}", 700f, sy + 10, 28f, 0xFF66BB6A.toInt())
+        else Ui.text(c, "Очки начисляются при повышении уровня", 700f, sy + 10, 24f, 0xFF8FA0C8.toInt())
+        backBtn.draw(c)
+    }
+    override fun touch(x: Float, y: Float, gv: GameView) {
+        if (backBtn.hit(x, y)) { gv.pop(); return }
+        if (gv.player.freePoints > 0) {
+            val keys = listOf("str", "agi", "int", "vit")
+            for (i in plusBtns.indices) {
+                if (plusBtns[i].hit(x, y)) {
+                    gv.player.freePoints--
+                    when (keys[i]) {
+                        "str" -> gv.player.str++; "agi" -> gv.player.agi++
+                        "int" -> gv.player.intl++; "vit" -> gv.player.vit++
+                    }
+                    gv.player.hp = gv.player.hp.coerceAtMost(gv.player.maxHp())
+                    Save.save(gv.context, gv, gv.mapScene())
+                    return
+                }
+            }
+        }
+    }
+}
+
+// ---------- shop ----------
+class ShopScene(private val gv: GameView, private val floor: Int, private val stock: List<ItemInstance>) : Scene {
+    private var sellMode = false
+    private val toggleBtn = Btn(1010f, 640f, 230f, 60f, "Режим продажи")
+    private val backBtn = Btn(40f, 640f, 220f, 60f, "Уйти", 0xFF5B3A3A.toInt())
+    private val potionBtn = Btn(300f, 640f, 380f, 60f, "Купить зелье (30 з.)")
+
+    override fun update(dt: Float, gv: GameView) {}
+    override fun render(c: Canvas, gv: GameView) {
+        Ui.bg(c, 1280f, 720f)
+        Ui.text(c, if (sellMode) "ПРОДАЖА" else "ТОРГОВЕЦ", 640f, 60f, 44f, 0xFFFFD54F.toInt(), center = true)
+        Ui.text(c, "Ваше золото: ${gv.player.gold}", 640f, 100f, 26f, 0xFFFFD54F.toInt(), center = true)
+        val items = if (sellMode) gv.player.inventory else stock
+        val cell = 116f
+        for (i in items.indices) {
+            val col = i % 5; val row = i / 5
+            val x = 140f + col * (cell + 30); val y = 150f + row * (cell + 70)
+            Ui.itemIcon(c, items[i], x, y, cell)
+            val price = if (sellMode) gv.player.sellPrice(items[i]) else items[i].price()
+            Ui.text(c, "$price з.", x + cell / 2, y + cell + 34f, 24f, 0xFFFFD54F.toInt(), center = true)
+        }
+        if (items.isEmpty()) Ui.text(c, if (sellMode) "Инвентарь пуст" else "Товар закончился", 640f, 400f, 30f, center = true)
+        Ui.text(c, if (sellMode) "Нажмите на предмет, чтобы продать" else "Нажмите на предмет, чтобы купить", 640f, 600f, 24f, 0xFF8FA0C8.toInt(), center = true)
+        potionBtn.draw(c); toggleBtn.draw(c); backBtn.draw(c)
+    }
+    override fun touch(x: Float, y: Float, gv: GameView) {
+        if (backBtn.hit(x, y)) { gv.pop(); return }
+        if (toggleBtn.hit(x, y)) { sellMode = !sellMode; return }
+        if (potionBtn.hit(x, y)) {
+            if (gv.player.gold >= 30) { gv.player.gold -= 30; gv.player.potions++ }
+            return
+        }
+        val cell = 116f
+        if (!sellMode) {
+            for (i in stock.indices) {
+                val col = i % 5; val row = i / 5
+                val cx = 140f + col * (cell + 30); val cy = 150f + row * (cell + 70)
+                if (x >= cx && x <= cx + cell && y >= cy && y <= cy + cell + 40) {
+                    val it = stock[i]
+                    if (gv.player.gold >= it.price()) {
+                        if (gv.player.addItem(it)) {
+                            gv.player.gold -= it.price()
+                            (stock as MutableList).removeAt(i)
+                            Save.save(gv.context, gv, gv.mapScene())
+                        }
+                    }
+                    return
+                }
+            }
+        } else {
+            val inv = gv.player.inventory
+            for (i in inv.indices) {
+                val col = i % 5; val row = i / 5
+                val cx = 140f + col * (cell + 30); val cy = 150f + row * (cell + 70)
+                if (x >= cx && x <= cx + cell && y >= cy && y <= cy + cell + 40) {
+                    gv.player.gold += gv.player.sellPrice(inv[i])
+                    inv.removeAt(i)
+                    Save.save(gv.context, gv, gv.mapScene())
+                    return
+                }
+            }
+        }
+    }
+}

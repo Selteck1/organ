@@ -1,0 +1,10 @@
+package ru.castle.game
+
+import android.graphics.Canvas
+
+interface Scene {
+    fun update(dt: Float, gv: GameView)
+    fun render(c: Canvas, gv: GameView)
+    fun touch(x: Float, y: Float, gv: GameView)
+    fun onBack(gv: GameView): Boolean = false
+}

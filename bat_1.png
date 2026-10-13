@@ -1,0 +1,380 @@
+package ru.castle.game
+
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.RectF
+import org.json.JSONArray
+import org.json.JSONObject
+import kotlin.math.abs
+import kotlin.random.Random
+
+enum class RoomType(val label: String) {
+    START("Вход"), FIGHT("Бой"), ELITE("Элита"), CHEST("Сундук"),
+    SHOP("Магазин"), REST("Костер"), BOSS("Босс"), EXIT("Вниз")
+}
+
+class Room(val id: Int, val type: RoomType, val gx: Int, val gy: Int, var cleared: Boolean = false)
+
+class MapScene(private val gv: GameView, val floor: Int, restore: JSONObject? = null) : Scene {
+    private val rooms = ArrayList<Room>()
+    private val edges = ArrayList<Pair<Int, Int>>()
+    private var currentId = 0
+    private var time = 0f
+    val fx = Fx()
+
+    private var heroX = 0f
+    private var heroY = 0f
+    private var moving = false
+    private var moveT = 0f
+    private var fromX = 0f; private var fromY = 0f
+    private var toX = 0f; private var toY = 0f
+    private var moveTarget = 0
+
+    private val invBtn = Btn(1040f, 20f, 210f, 52f, "Рюкзак")
+    private val heroBtn = Btn(1040f, 80f, 210f, 52f, "Персонаж")
+    private val potionBtn = Btn(1040f, 140f, 210f, 52f, "Зелье", 0xFF6B3A3A.toInt())
+    private val menuBtn = Btn(1040f, 200f, 210f, 52f, "Меню", 0xFF444A5E.toInt())
+
+    init {
+        if (restore != null) fromJson(restore)
+        else generate()
+        val r = rooms[currentId]
+        heroX = roomPx(r.gx) + 60
+        heroY = roomPy(r.gy) + 80
+    }
+
+    private fun roomPx(gx: Int) = 130f + gx * 190f
+    private fun roomPy(gy: Int) = 180f + gy * 150f
+
+    private fun generate() {
+        val cols = 6; val rows = 4
+        val occupied = HashSet<Pair<Int, Int>>()
+        val startGy = Random.nextInt(rows)
+        rooms.add(Room(0, RoomType.START, 0, startGy))
+        occupied.add(0 to startGy)
+        val total = Random.nextInt(8, 10)
+        while (rooms.size < total) {
+            val gx = Random.nextInt(1, cols)
+            val gy = Random.nextInt(rows)
+            if (occupied.add(gx to gy)) {
+                rooms.add(Room(rooms.size, RoomType.FIGHT, gx, gy))
+            }
+        }
+        // connect: each room to nearest already connected
+        val connected = HashSet<Int>(); connected.add(0)
+        val remaining = (1 until rooms.size).toMutableList()
+        while (remaining.isNotEmpty()) {
+            var best: Pair<Int, Int>? = null; var bestD = 999
+            for (r in remaining) {
+                for (c in connected) {
+                    val d = abs(rooms[r].gx - rooms[c].gx) + abs(rooms[r].gy - rooms[c].gy)
+                    if (d < bestD) { bestD = d; best = r to c }
+                }
+            }
+            val b = best!!
+            edges.add(b)
+            connected.add(b.first)
+            remaining.remove(b.first)
+        }
+        // extra edge
+        val a = Random.nextInt(rooms.size)
+        val b = Random.nextInt(rooms.size)
+        if (a != b && !edges.contains(a to b) && !edges.contains(b to a)) edges.add(a to b)
+
+        // assign types
+        val isBossFloor = floor % 3 == 0
+        val start = rooms[0]
+        var farthest = rooms[1]
+        var fd = 0
+        for (r in rooms.drop(1)) {
+            val d = abs(r.gx - start.gx) + abs(r.gy - start.gy)
+            if (d > fd) { fd = d; farthest = r }
+        }
+        val mutable = rooms.filter { it.id != 0 && it.id != farthest.id }
+        for (r in mutable) {
+            val roll = Random.nextDouble()
+            r.type = when {
+                floor >= 2 && roll < 0.18 -> RoomType.ELITE
+                roll < 0.60 -> RoomType.FIGHT
+                roll < 0.75 -> RoomType.CHEST
+                roll < 0.88 -> RoomType.SHOP
+                else -> RoomType.REST
+            }
+        }
+        farthest.type = if (isBossFloor) RoomType.BOSS else RoomType.EXIT
+        // guarantee at least 2 fights
+        if (rooms.count { it.type == RoomType.FIGHT } < 2) {
+            mutable.firstOrNull { it.type == RoomType.CHEST }?.let { it.type = RoomType.FIGHT }
+        }
+    }
+
+    fun toJson(): JSONObject {
+        val o = JSONObject()
+        o.put("current", currentId)
+        val ra = JSONArray()
+        for (r in rooms) {
+            val ro = JSONObject()
+            ro.put("id", r.id); ro.put("type", r.type.ordinal)
+            ro.put("gx", r.gx); ro.put("gy", r.gy)
+            ro.put("cleared", r.cleared)
+            ra.put(ro)
+        }
+        o.put("rooms", ra)
+        val ea = JSONArray()
+        for (e in edges) {
+            val eo = JSONArray()
+            eo.put(e.first); eo.put(e.second)
+            ea.put(eo)
+        }
+        o.put("edges", ea)
+        return o
+    }
+
+    private fun fromJson(o: JSONObject) {
+        currentId = o.getInt("current")
+        val ra = o.getJSONArray("rooms")
+        for (i in 0 until ra.length()) {
+            val ro = ra.getJSONObject(i)
+            rooms.add(Room(
+                ro.getInt("id"),
+                RoomType.values()[ro.getInt("type")],
+                ro.getInt("gx"), ro.getInt("gy"),
+                ro.getBoolean("cleared")
+            ))
+        }
+        val ea = o.getJSONArray("edges")
+        for (i in 0 until ea.length()) {
+            val eo = ea.getJSONArray(i)
+            edges.add(eo.getInt(0) to eo.getInt(1))
+        }
+    }
+
+    private fun neighbors(id: Int): List<Int> {
+        val out = ArrayList<Int>()
+        for (e in edges) {
+            if (e.first == id) out.add(e.second)
+            if (e.second == id) out.add(e.first)
+        }
+        return out
+    }
+
+    private fun roomAt(x: Float, y: Float): Room? {
+        for (r in rooms) {
+            val rx = roomPx(r.gx); val ry = roomPy(r.gy)
+            if (x >= rx && x <= rx + 150 && y >= ry && y <= ry + 150) return r
+        }
+        return null
+    }
+
+    private fun saveGame() = Save.save(gv.context, gv, this)
+
+    private fun nextFloor() {
+        gv.floor++
+        saveGame0()
+        if (gv.floor > 12) {
+            gv.resetTo(VictoryScene())
+        } else {
+            gv.resetTo(MapScene(gv, gv.floor))
+        }
+    }
+
+    private fun saveGame0() { Save.save(gv.context, gv, this) }
+
+    override fun update(dt: Float, gv: GameView) {
+        time += dt
+        fx.update(dt)
+        for (e in enemiesState()) e.flash = (e.flash - dt).coerceAtLeast(0f)
+        if (moving) {
+            moveT += dt * 2.6f
+            if (moveT >= 1f) {
+                moveT = 1f; moving = false
+                currentId = moveTarget
+                onEnterRoom(rooms[currentId])
+            }
+            val t = moveT
+            heroX = fromX + (toX - fromX) * t
+            heroY = fromY + (toY - fromY) * t
+        }
+    }
+
+    private fun enemiesState(): List<Enemy> = emptyList()
+
+    private fun onEnterRoom(r: Room) {
+        when (r.type) {
+            RoomType.FIGHT, RoomType.ELITE -> {
+                if (!r.cleared) {
+                    gv.push(BattleScene(gv, r) {
+                        r.cleared = true
+                        if (r.type == RoomType.ELITE) {
+                            gv.player.heal(gv.player.maxHp() / 5)
+                        }
+                        saveGame()
+                    })
+                }
+            }
+            RoomType.BOSS -> {
+                if (!r.cleared) {
+                    gv.push(BattleScene(gv, r) {
+                        r.cleared = true
+                        saveGame()
+                    })
+                } else {
+                    nextFloor()
+                }
+            }
+            RoomType.EXIT -> nextFloor()
+            else -> interactRoom(r)
+        }
+    }
+
+    private fun interactRoom(r: Room) {
+        when (r.type) {
+            RoomType.CHEST -> {
+                if (r.cleared) return
+                r.cleared = true
+                val item = ItemGen.roll(floor, luck = 1.25)
+                val gold = 20 + Random.nextInt(30) + floor * 8
+                gv.player.gold += gold
+                val lines = mutableListOf("Вы нашли: ${item.displayName()}!", "+$gold золота")
+                if (!gv.player.addItem(item)) {
+                    gv.player.gold += item.price() / 2
+                    lines.add("(инвентарь полон — предмет продан автоматически)")
+                }
+                saveGame()
+                gv.push(MessageScene(lines, "Сундук"))
+            }
+            RoomType.SHOP -> {
+                gv.push(ShopScene(gv, floor, ItemGen.shopStock(floor)))
+            }
+            RoomType.REST -> {
+                if (r.cleared) return
+                r.cleared = true
+                val h = gv.player.maxHp() * 2 / 5
+                gv.player.heal(h)
+                gv.player.restoreMp(gv.player.maxMp() / 2)
+                saveGame()
+                gv.push(MessageScene(listOf("Вы отдохнули у костра.", "Восстановлено $h здоровья."), "Привал"))
+            }
+            else -> {}
+        }
+    }
+
+    override fun render(c: Canvas, gv: GameView) {
+        Ui.bg(c, 1280f, 720f)
+        // top HUD
+        val p = gv.player
+        Ui.bar(c, 20f, 16f, 300f, 30f, p.hp.toFloat() / p.maxHp(), 0xFFEF5350.toInt(), "HP ${p.hp}/${p.maxHp()}")
+        Ui.bar(c, 20f, 52f, 300f, 30f, p.mp.toFloat() / p.maxMp(), 0xFF42A5F5.toInt(), "MP ${p.mp}/${p.maxMp()}")
+        Ui.bar(c, 340f, 16f, 260f, 22f, p.xp.toFloat() / Balance.xpForLevel(p.level), 0xFFFFD54F.toInt(), "Ур. ${p.level}")
+        Ui.text(c, "Этаж $floor / 12", 470f, 60f, 26f, 0xFFAAB2C8.toInt(), center = true)
+        Ui.text(c, "Золото: ${p.gold}", 350f, 60f, 26f, 0xFFFFD54F.toInt())
+        Ui.text(c, "Зелья: ${p.potions}", 610f, 60f, 26f, 0xFFEF9A9A.toInt())
+
+        // edges
+        val pe = Paint(); pe.color = 0xFF3A3F55.toInt(); pe.strokeWidth = 30f
+        val pe2 = Paint(); pe2.color = 0xFF22263A.toInt(); pe2.strokeWidth = 16f
+        for (e in edges) {
+            val a = rooms[e.first]; val b = rooms[e.second]
+            val ax = roomPx(a.gx) + 75; val ay = roomPy(a.gy) + 75
+            val bx = roomPx(b.gx) + 75; val by = roomPy(b.gy) + 75
+            c.drawLine(ax, ay, bx, by, pe)
+            c.drawLine(ax, ay, bx, by, pe2)
+        }
+        // rooms
+        for (r in rooms) {
+            val rx = roomPx(r.gx); val ry = roomPy(r.gy)
+            Ui.sprite(c, "floor", rx, ry, 150f / 32f)
+            val border = Paint(); border.style = Paint.Style.STROKE; border.strokeWidth = 5f
+            border.color = when {
+                r.cleared -> 0xFF4CAF50.toInt()
+                r.type == RoomType.BOSS -> 0xFFEF5350.toInt()
+                r.type == RoomType.ELITE -> 0xFFFFA726.toInt()
+                else -> 0xFF6A7194.toInt()
+            }
+            c.drawRect(rx + 2, ry + 2, rx + 148, ry + 148, border)
+            // icon
+            when (r.type) {
+                RoomType.START -> Ui.sprite(c, "door", rx + 45, ry + 40, 2f)
+                RoomType.FIGHT -> Ui.sprite(c, "skel_0", rx + 45, ry + 30, 1.8f)
+                RoomType.ELITE -> Ui.sprite(c, "golem_0", rx + 40, ry + 20, 1.6f)
+                RoomType.CHEST -> Ui.sprite(c, if (r.cleared) "chest_1" else "chest_0", rx + 30, ry + 30, 2.6f)
+                RoomType.SHOP -> {
+                    val cp = Paint(); cp.color = 0xFFFFD54F.toInt()
+                    c.drawCircle(rx + 75, ry + 60, 26f, cp)
+                    Ui.text(c, "з", rx + 75, ry + 72f, 30f, 0xFF6B4A00.toInt(), center = true)
+                }
+                RoomType.REST -> Ui.sprite(c, if (time % 0.5f < 0.25f) "fire_0" else "fire_1", rx + 35, ry + 35, 2.4f)
+                RoomType.BOSS -> Ui.sprite(c, if (floor >= 12) "dragon_0" else "necro_0", rx + 25, ry + 5, 1.6f)
+                RoomType.EXIT -> Ui.sprite(c, "stairs", rx + 30, ry + 30, 2.6f)
+            }
+            val lp = Paint(P.small); lp.textSize = 20f; lp.textAlign = Paint.Align.CENTER
+            lp.color = if (r.cleared) 0xFF4CAF50.toInt() else 0xFF8FA0C8.toInt()
+            c.drawText(r.type.label, rx + 75, ry + 142, lp)
+        }
+        // hero
+        val frame = if (moving) (time * 8f).toInt() % 4 else (time * 2f).toInt() % 4
+        val spr = if (moving) "hero_walk_$frame" else "hero_idle_$frame"
+        Ui.sprite(c, spr, heroX - 32, heroY - 64, 2f)
+        // marker above current room
+        val cr = rooms[currentId]
+        val mx = roomPx(cr.gx) + 75; val my = roomPy(cr.gy) - 8 + (kotlin.math.sin(time * 4).toFloat() * 5f)
+        val mp = Paint(); mp.color = 0xFFFFD54F.toInt()
+        val path = android.graphics.Path()
+        path.moveTo(mx - 12, my); path.lineTo(mx + 12, my); path.lineTo(mx, my + 16); path.close()
+        c.drawPath(path, mp)
+
+        invBtn.draw(c); heroBtn.draw(c); potionBtn.draw(c); menuBtn.draw(c)
+        Ui.text(c, "Нажмите на соседнюю комнату, чтобы идти; на текущую — для действия", 640f, 705f, 20f, 0xFF6A7194.toInt(), center = true)
+        fx.draw(c)
+    }
+
+    override fun touch(x: Float, y: Float, gv: GameView) {
+        if (moving) return
+        if (invBtn.hit(x, y)) { gv.push(InventoryScene(gv)); return }
+        if (heroBtn.hit(x, y)) { gv.push(CharacterScene(gv)); return }
+        if (menuBtn.hit(x, y)) { gv.push(MenuScene()); return }
+        if (potionBtn.hit(x, y)) {
+            val p = gv.player
+            if (p.potions > 0 && p.hp < p.maxHp()) {
+                p.potions--
+                p.heal(p.maxHp() * 2 / 5)
+                fx.heal(heroX, heroY - 80, p.maxHp() * 2 / 5)
+            }
+            return
+        }
+        val r = roomAt(x, y) ?: return
+        if (r.id == currentId) {
+            onEnterRoom(r)
+        } else if (neighbors(currentId).contains(r.id)) {
+            moving = true; moveT = 0f
+            moveTarget = r.id
+            fromX = heroX; fromY = heroY
+            toX = roomPx(r.gx) + 60; toY = roomPy(r.gy) + 80
+        }
+    }
+
+    override fun onBack(gv: GameView): Boolean {
+        gv.push(MenuScene())
+        return true
+    }
+}
+
+class MenuScene : Scene {
+    private val cont = Btn(490f, 300f, 300f, 70f, "Продолжить")
+    private val saveTitle = Btn(490f, 390f, 300f, 70f, "Сохранить и в меню")
+    override fun update(dt: Float, gv: GameView) {}
+    override fun render(c: Canvas, gv: GameView) {
+        c.drawRect(0f, 0f, 1280f, 720f, P.dim)
+        Ui.panel(c, 420f, 200f, 440f, 320f)
+        Ui.text(c, "МЕНЮ", 640f, 260f, 44f, 0xFFFFD54F.toInt(), center = true)
+        cont.draw(c); saveTitle.draw(c)
+    }
+    override fun touch(x: Float, y: Float, gv: GameView) {
+        if (cont.hit(x, y)) gv.pop()
+        else if (saveTitle.hit(x, y)) {
+            Save.save(gv.context, gv, gv.mapScene())
+            gv.resetTo(TitleScene())
+        }
+    }
+}

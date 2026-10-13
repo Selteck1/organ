@@ -1,0 +1,54 @@
+package ru.castle.game
+
+import android.app.Activity
+import android.os.Bundle
+import android.view.View
+import android.view.Window
+import android.view.WindowManager
+
+class MainActivity : Activity() {
+
+    private lateinit var gv: GameView
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        requestWindowFeature(Window.FEATURE_NO_TITLE)
+        window.setFlags(
+            WindowManager.LayoutParams.FLAG_FULLSCREEN,
+            WindowManager.LayoutParams.FLAG_FULLSCREEN
+        )
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        Assets.loadAll(this)
+        gv = GameView(this)
+        gv.resetTo(TitleScene())
+        setContentView(gv)
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            window.decorView.systemUiVisibility = (
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                or View.SYSTEM_UI_FLAG_FULLSCREEN
+                or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN)
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (gv.mapSceneOrNull() != null) {
+            Save.save(this, gv, gv.mapScene())
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (!gv.backPressed()) {
+            @Suppress("DEPRECATION")
+            super.onBackPressed()
+        }
+    }
+}

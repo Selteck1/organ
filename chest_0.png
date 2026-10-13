@@ -1,0 +1,32 @@
+package ru.castle.game
+
+import android.content.Context
+import org.json.JSONObject
+
+object Save {
+    private const val PREF = "castle_shadows_save"
+
+    fun has(ctx: Context): Boolean {
+        return ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE).contains("data")
+    }
+
+    fun save(ctx: Context, gv: GameView, map: MapScene) {
+        val o = JSONObject()
+        o.put("player", gv.player.toJson())
+        o.put("floor", gv.floor)
+        o.put("map", map.toJson())
+        ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit().putString("data", o.toString()).apply()
+    }
+
+    fun load(ctx: Context, gv: GameView): MapScene {
+        val s = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE).getString("data", "{}") ?: "{}"
+        val o = JSONObject(s)
+        gv.floor = o.getInt("floor")
+        gv.player.fromJson(o.getJSONObject("player"))
+        return MapScene(gv, gv.floor, o.getJSONObject("map"))
+    }
+
+    fun clear(ctx: Context) {
+        ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit().remove("data").apply()
+    }
+}
